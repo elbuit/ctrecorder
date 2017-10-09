@@ -1,0 +1,29 @@
+Conntrack Recorder
+------------------
+
+0.1.6 : 2013.02.24
+  - added -H, and -L -H
+
+0.1.5 : 2011.12.08
+  - added -lnfnetlink
+
+0.1.4 : 2011.09.23
+  TODO: test mode
+  - fixed linux/netfilter_ipv4.h usability in configure for newer netfilter
+  - added header "decimal" start time split to year/month/day/hours/minutes/seconds
+  - added option -H to show only the file header
+  - experimental support for off-line squeezing
+
+0.1.3 : 2010.09.29
+  - first public release
+
+0.1.2 :
+  - file header: changed fields order, added proto field, and filling up to 256 bytes
+  - added option to choose recorded protocol: tcp, udp, sctp (these should work)
+  - added "squeezed" (combined) output
+  - SIGUSR1: flush buffer and log statistics
+
+0.1.1 :
+  - event buffering before writing to file
+  - statistics logging cleanup and enhancement
+

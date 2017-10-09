@@ -1,0 +1,227 @@
+#	Copyright (C) 2004-2005 Bart³omiej Korupczynski <bartek@klolik.org>
+#	
+#	This program is free software; you can redistribute it and/or 
+#	modify it under the terms of the GNU General Public License 
+#	as published by the Free Software Foundation; either 
+#	version 2 of the License, or (at your option) any later 
+#	version.
+#	
+#	This program is distributed in the hope that it will be useful,
+#	but WITHOUT ANY WARRANTY; without even the implied warranty of
+#	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#	GNU General Public License for more details.
+#	
+#	You should have received a copy of the GNU General Public License
+#	along with this program; if not, write to the Free Software
+#	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
+
+#AC_PREREQ(2.53)
+
+AC_INIT(Makefile.am)
+AC_CANONICAL_HOST
+AM_INIT_AUTOMAKE([ctrecorder], [0.1.6])
+AM_CONFIG_HEADER([config.h])
+
+#
+# programs
+
+AC_PROG_CC
+AM_PROG_CC_C_O
+AC_PROG_MAKE_SET
+AC_PROG_INSTALL
+
+#
+# flags
+
+CFLAGS="$CFLAGS -Wall"
+
+#
+# progs
+
+AC_CHECK_TOOL(STRIP,strip)
+AC_CHECK_PROG(PERL,perl,perl)
+#AC_PATH_PROG(TXT2TAGS,txt2tags)
+AC_CHECK_PROG(TXT2TAGS,txt2tags,txt2tags)
+
+#
+# headers
+
+AC_HEADER_STDC
+
+AC_C_BIGENDIAN(
+	AC_DEFINE(IS_BIG_ENDIAN, [], [Big-Endian architecture]),
+	AC_DEFINE(IS_LITTLE_ENDIAN, [], [Little-Endian architecture]),
+	AC_ERROR([Architecture endianess unknown!]))
+
+AC_CHECK_TYPES([uint32_t, u_int32_t])
+AC_CHECK_TYPES([sig_atomic_t],,,[#include <signal.h>])
+
+AC_CHECK_SIZEOF([pid_t])
+AC_CHECK_SIZEOF([uid_t])
+AC_CHECK_SIZEOF([time_t])
+
+AC_CHECK_MEMBERS([struct stat.st_size])
+
+AC_CHECK_HEADERS([err.h limits.h stdint.h netinet/in.h])
+AC_CHECK_HEADERS([sys/types.h sys/time.h sys/socket.h])
+AC_CHECK_HEADERS([sys/loadavg.h sys/resource.h sys/wait.h])
+AC_CHECK_HEADERS([zlib.h])
+
+AC_CHECK_HEADERS([endian.h sys/endian.h byteswap.h machine/bswap.h])
+AC_CHECK_DECLS([bswap_16, bswap_32, bswap_64, bswap16, bswap32, bswap64],,,
+	[[
+	#include <sys/types.h>
+	#ifdef HAVE_ENDIAN_H
+	#include <endian.h>
+	#endif
+	#ifdef HAVE_SYS_ENDIAN_H
+	#include <sys/endian.h>
+	#endif
+	#ifdef HAVE_BYTESWAP_H
+	#include <byteswap.h>
+	#endif
+	#ifdef HAVE_MACHINE_BSWAP_H
+	#include <machine/bswap.h>
+	#endif
+	]])
+AC_CHECK_DECLS([swap16, swap32, swap64, __swap16, __swap32, __swap64],,, 
+	[[
+	#include <sys/types.h>
+	#ifdef HAVE_ENDIAN_H
+	#include <endian.h>
+	#endif
+	#ifdef HAVE_SYS_ENDIAN_H
+	#include <sys/endian.h>
+	#endif
+	#ifdef HAVE_BYTESWAP_H
+	#include <byteswap.h>
+	#endif
+	#ifdef HAVE_MACHINE_BSWAP_H
+	#include <machine/bswap.h>
+	#endif
+	]])
+
+#AC_CHECK_DECLS([htobe16, htobe32, htobe64, htole16, htole32, htole64])
+#AC_CHECK_DECLS([be16toh, be32toh, be64toh, le16toh, le32toh, le64toh],,, [#include <sys/types.h>])
+
+AC_CHECK_FUNCS([strndup asprintf vasprintf])
+AC_CHECK_FUNCS([setenv setproctitle getloadavg])
+AC_CHECK_FUNCS(accept,,[AC_CHECK_LIB(socket,accept)])
+AC_CHECK_FUNCS(inet_ntoa,,[AC_CHECK_LIB(nsl,inet_ntoa)])
+
+AC_CHECK_FUNCS([inet_aton],,[AC_CHECK_FUNCS([inet_pton],,[AC_ERROR([inet_aton nor inet_pton found!])])])
+AC_CHECK_FUNCS([getline],,[AC_CHECK_FUNCS([fgets],,[AC_ERROR([getline nor fgets found!])])])
+
+AC_CHECK_FUNCS([getrusage setrlimit])
+AC_CHECK_DECLS([RLIMIT_CORE, RLIMIT_AS, RLIMIT_DATA, RLIMIT_FSIZE],,,
+	[[
+	#include <sys/time.h>
+	#include <sys/resource.h>
+	#include <unistd.h>
+	]])
+
+AC_CHECK_DECLS([ATTR_TIMESTAMP_START],,,
+	[[
+	#include <libnetfilter_conntrack/libnetfilter_conntrack.h>
+	]])
+
+
+#
+# NAT support
+#
+
+AC_CHECK_HEADERS([linux/netfilter_ipv4.h],
+	[found_netfilter=1],,
+	[[
+	#include <arpa/inet.h>
+	#ifdef HAVE_LIMITS_H
+	#include <limits.h>
+	#endif
+	]])
+
+
+#
+# --enable-debug
+
+AC_MSG_CHECKING([if debugging enabled])
+AC_ARG_ENABLE(gdb, AC_HELP_STRING([--enable-gdb], [Enables gdb (debugger) information]))
+if test "x$enable_gdb" = "xyes"; then
+	CFLAGS="-g -Wall -O0"
+	AC_MSG_RESULT([yes ($CFLAGS)])
+else
+	AC_MSG_RESULT([no])
+fi
+
+#
+# --enable-static
+
+AC_ARG_ENABLE(static, AC_HELP_STRING([--enable-static], [Enables static compilation]))
+if test "x$enable_static" = "xyes"; then
+      LDFLAGS="-static"
+fi
+
+AC_MSG_NOTICE([-----------------------------------------------------------])
+
+#
+# --disable-capture
+
+AC_ARG_ENABLE(capture,
+	AC_HELP_STRING([--disable-capture], [Disable capture code, does not require netlink headers]))
+
+if test "x$enable_capture" = "xno"; then
+	disable_capture="yes"
+	AC_DEFINE(DISABLE_CAPTURE, 1, [Disable capture])
+fi
+
+AM_CONDITIONAL(ENABLE_CAPTURE, test x$enable_capture != xno)
+AC_MSG_NOTICE([setup: enable capture: $enable_capture])
+
+
+#
+# --enable-remake-doc
+
+#AC_ARG_ENABLE(
+#	remake_doc,
+#	AC_HELP_STRING([--enable-remake-doc], [Enable remaking of documentation files. Maintainer only]))
+
+#AM_CONDITIONAL(REMAKE_DOC, test x$enable_remake_doc = xyes)
+
+AM_CONDITIONAL(TXT2TAGS, test x$TXT2TAGS != x)
+
+AC_MSG_NOTICE([-----------------------------------------------------------])
+
+#
+# defaults
+
+AC_DEFINE(PID_FILE_MODE, 0664, [Mode of .pid file])
+
+#
+# RPM .spec versioning
+
+RELEASE=`echo "$VERSION" | sed -e 's/.*-//'`
+RPM_VER=`echo "$VERSION" | sed -e 's/-.*//'`
+if test "x$RPM_VER" = "x$RELEASE"; then
+	RELEASE=""
+	RPM_REL="1"
+	RPM_FULL="$RPM_VER"
+else
+	RPM_REL="$RELEASE"
+	RPM_FULL="$RPM_VER-$RPM_REL"
+fi
+AC_DEFINE_UNQUOTED(VERSION, ["$VERSION"], [Package version])
+#AC_DEFINE_UNQUOTED(RELEASE, ["$RELEASE"], [Package release])
+AC_SUBST(RELEASE)
+AC_SUBST(RPM_FULL)
+AC_SUBST(RPM_VER)
+AC_SUBST(RPM_REL)
+
+
+#
+# output
+
+AC_OUTPUT([
+	ctrecorder.spec Makefile src/Makefile contrib/Makefile
+	doc/Makefile doc/ctrecorder.t2t doc/ctrecorder.conf.t2t])
+
+

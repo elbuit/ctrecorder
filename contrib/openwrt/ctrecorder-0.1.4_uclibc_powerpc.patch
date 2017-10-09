@@ -1,0 +1,125 @@
+20111127
+compile on powerpc+uclibc
+patch by ayufan@osk-net.pl
+apply:
+	ctrecorder-X.X.X$ patch -p0 <contrib/ctrecorder-0.1.4_uclibc_powerpc.patch
+	ctrecorder-X.X.X$ ./configure && make
+patch follows:
+# HG changeset patch
+# User ayufan@osk-net.pl
+# Date 1322399695 -3600
+# Node ID 755aed6f38f9ad8cd94352f751ee86c382f1fe01
+# Parent  2aaa50c97425f83ffaded07b613acfaa18fb7428
+busybox
+
+diff -r 2aaa50c97425 -r 755aed6f38f9 src/ctrecorder.c
+--- a/src/ctrecorder.c	Sun Nov 27 14:13:48 2011 +0100
++++ b/src/ctrecorder.c	Sun Nov 27 14:14:55 2011 +0100
+@@ -362,10 +362,14 @@
+ 	return NFCT_CB_CONTINUE;
+ }
+ 
++static int collect_handle_signals[] = {SIGINT, SIGQUIT, SIGTERM, SIGHUP, SIGUSR1, SIGUSR2, 0};
++
++static int collect_ignore_signals[] = {0};
+ 
+ void collect_events()
+ {
+ 	int res;
++	struct sigaction sa;
+ 
+ 	if (!(cth = nfct_open(CONNTRACK, NF_NETLINK_CONNTRACK_NEW | NF_NETLINK_CONNTRACK_DESTROY))) {
+ 		log_action(LOG_ERR, "can't open conntrack: %s", strerror(errno));
+@@ -373,7 +377,8 @@
+ 		exit(1);
+ 	}
+ 
+-	setup_signals(&signal_handler, ARRAY(int, SIGINT, SIGQUIT, SIGTERM, SIGHUP, SIGUSR1, SIGUSR2, 0), ARRAY(int, 0));
++	res = setup_signals(&sa, &signal_handler, collect_handle_signals, collect_ignore_signals);
++	
+ 	daemonize("ctrecorder", LOG_DAEMON, priority, NULL, pid_file, user, group, 0);
+ 
+ 	log_action(LOG_INFO, "%s %s, compiled %s %s, format %08x", PACKAGE, VERSION, __DATE__, __TIME__, CTEVENTLOG_VERSION);
+@@ -844,7 +849,7 @@
+ 	tzset();
+ 
+ 	char opt;
+-	while ((opt = getopt(argc, argv, "CLSTf:o:i:p:t:b:B:N:U:G:P:a:sFHhV")) != -1) {
++	while ((opt = getopt(argc, argv, "CLSTf:o:i:p:t:b:B:N:U:G:P:a:sFHhV")) != (char)-1) {
+ 		switch (opt) {
+ 		case 'C':
+ 			mode = M_COLLECT;
+diff -r 2aaa50c97425 -r 755aed6f38f9 src/util.c
+--- a/src/util.c	Sun Nov 27 14:13:48 2011 +0100
++++ b/src/util.c	Sun Nov 27 14:14:55 2011 +0100
+@@ -745,6 +745,25 @@
+  * 	other functions
+ */
+ 
++int getloadavg(double *list, int nelem)
++{
++	FILE *LOADAVG;
++	double avg[3] = { 0.0, 0.0, 0.0 };
++	int i, res = -1;;
++
++	if ((LOADAVG = fopen("/proc/loadavg", "r"))) {
++		fscanf(LOADAVG, "%lf %lf %lf", &avg[0], &avg[1], &avg[2]);
++		res = 0;
++		fclose(LOADAVG);
++	}
++
++	for (i = 0; (i < nelem) && (i < 3); i++) {
++		list[i] = avg[i];
++	}
++
++	return res;
++}
++
+ int is_load_above(double max, /*@null@*/ double *current)
+ {
+ 	int res;
+@@ -918,25 +937,23 @@
+ } /* cat() */
+ 
+ 
+-int setup_signals(void (*handler)(int signum), int handle_signals[], int ignore_signals[])
++int setup_signals(struct sigaction* sa, void (*handler)(int signum), int handle_signals[], int ignore_signals[])
+ {
+-	struct sigaction sa;
++	sigfillset(&sa->sa_mask);
++	sa->sa_flags = 0;
+ 
+-	sigfillset(&sa.sa_mask);
+-	sa.sa_flags = 0;
+-
+-	sa.sa_handler = handler;
++	sa->sa_handler = handler;
+ 	if (handle_signals) {
+ 		while (*handle_signals) {
+-			if (sigaction(*handle_signals, &sa, NULL) == -1) return -1;
++			if (sigaction(*handle_signals, sa, NULL) == -1) return -1;
+ 			handle_signals++;
+ 		}
+ 	}
+ 
+-	sa.sa_handler = SIG_IGN;
++	sa->sa_handler = SIG_IGN;
+ 	if (ignore_signals) {
+ 		while (*ignore_signals) {
+-			if (sigaction(*ignore_signals, &sa, NULL) == -1) return -1;
++			if (sigaction(*ignore_signals, sa, NULL) == -1) return -1;
+ 			ignore_signals++;
+ 		}
+ 	}
+diff -r 2aaa50c97425 -r 755aed6f38f9 src/util.h
+--- a/src/util.h	Sun Nov 27 14:13:48 2011 +0100
++++ b/src/util.h	Sun Nov 27 14:14:55 2011 +0100
+@@ -300,7 +300,7 @@
+ #endif
+ 
+ EXTERN int cat(char *fn);
+-EXTERN int setup_signals(void (*handler)(int signum), int handle_signals[], int ignore_signals[]);
++EXTERN int setup_signals(struct sigaction* sa, void (*handler)(int signum), int handle_signals[], int ignore_signals[]);
+ #ifdef HAVE_SETRLIMIT
+ EXTERN int set_rlimit(int what, rlim_t value);
+ #endif

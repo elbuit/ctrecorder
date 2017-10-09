@@ -1,0 +1,10 @@
+# ctrecorder defaults
+#DAEMON_ARGS="-t 360 -b 2048 -B 3000"
+
+TCP_RUN=yes
+UDP_RUN=yes
+
+RECORDPATH=/var/log/ct
+TCP_FILENAME="$RECORDPATH/tcp-%Y%m%d-%H%M%S.log"
+UDP_FILENAME="$RECORDPATH/udp-%Y%m%d-%H%M%S.log"
+

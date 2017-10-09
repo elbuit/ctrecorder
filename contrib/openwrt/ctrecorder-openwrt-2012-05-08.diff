@@ -1,0 +1,772 @@
+Index: package/ctrecorder/files/ctrecorder.init
+===================================================================
+--- package/ctrecorder/files/ctrecorder.init	(revision 0)
++++ package/ctrecorder/files/ctrecorder.init	(revision 0)
+@@ -0,0 +1,41 @@
++#!/bin/sh /etc/rc.common
++
++START=55
++PIDDIR=/var/run/
++
++service_start() {
++		local rootdir
++		local path
++		local interval
++		local proto
++		local entries
++		local enabled
++		
++		config_get rootdir $1 rootdir /tmp
++		config_get proto $1 proto tcp
++		config_get path $1 path $rootdir/$proto-%Y%m%d-%H%M%S.log.gz
++		config_get interval $1 interval 60
++		config_get entries $1 entries 100
++		config_get_bool enabled $1 enabled '1'
++		
++		[ "$enabled" -gt 0 ] && /usr/sbin/ctrecorder -C -f $path -t $interval -p $proto -B $entries -P /var/run/ctrecorder.$proto.pid
++}
++
++service_stop() {
++		local proto
++		
++		config_get proto $1 proto tcp
++		
++		PID_F=/var/run/ctrecorder.${proto}.pid
++		[ -f $PID_F ] && kill $(cat $PID_F)
++}
++
++start() {
++        config_load ctrecorder
++        config_foreach service_start record
++}
++
++stop() {
++        config_load ctrecorder
++        config_foreach service_stop record
++}
+Index: package/ctrecorder/files/ctrecorder.config
+===================================================================
+--- package/ctrecorder/files/ctrecorder.config	(revision 0)
++++ package/ctrecorder/files/ctrecorder.config	(revision 0)
+@@ -0,0 +1,18 @@
++config record
++	option proto		tcp
++	option enabled		0
++	
++config record
++	option proto		udp
++	option enabled		0
++	
++config record
++	option proto		icmp
++	option enabled		0
++	
++# config record
++#	option rootdir		/tmp # root directory for log files
++#	option interval		60 # log rotation in minutes
++#	option proto		icmp # intercepted protocol
++#	option entries		1000 # local buffer size
++#	option enabled		0
+Index: package/ctrecorder/patches/00-embedded-support.patch
+===================================================================
+--- package/ctrecorder/patches/00-embedded-support.patch	(revision 0)
++++ package/ctrecorder/patches/00-embedded-support.patch	(revision 0)
+@@ -0,0 +1,118 @@
++# HG changeset patch
++# User ayufan@osk-net.pl
++# Date 1322399695 -3600
++# Node ID b68774aa07473ebf6604ce5312b46f086ab45148
++# Parent  ebb74205bf148b1e2ece4bcac2f73b189b3b2a6c
++uclibc compilation
++
++diff -r ebb74205bf14 -r b68774aa0747 src/ctrecorder.c
++--- a/src/ctrecorder.c	Fri May 04 13:00:30 2012 +0200
+++++ b/src/ctrecorder.c	Sun Nov 27 14:14:55 2011 +0100
++@@ -362,10 +362,14 @@
++ 	return NFCT_CB_CONTINUE;
++ }
++ 
+++static int collect_handle_signals[] = {SIGINT, SIGQUIT, SIGTERM, SIGHUP, SIGUSR1, SIGUSR2, 0};
+++
+++static int collect_ignore_signals[] = {0};
++ 
++ void collect_events()
++ {
++ 	int res;
+++	struct sigaction sa;
++ 
++ 	if (!(cth = nfct_open(CONNTRACK, NF_NETLINK_CONNTRACK_NEW | NF_NETLINK_CONNTRACK_DESTROY))) {
++ 		log_action(LOG_ERR, "can't open conntrack: %s", strerror(errno));
++@@ -373,7 +377,8 @@
++ 		exit(1);
++ 	}
++ 
++-	setup_signals(&signal_handler, ARRAY(int, SIGINT, SIGQUIT, SIGTERM, SIGHUP, SIGUSR1, SIGUSR2, 0), ARRAY(int, 0));
+++	res = setup_signals(&sa, &signal_handler, collect_handle_signals, collect_ignore_signals);
+++	
++ 	daemonize("ctrecorder", LOG_DAEMON, priority, NULL, pid_file, user, group, 0);
++ 
++ 	log_action(LOG_INFO, "%s %s, compiled %s %s, format %08x", PACKAGE, VERSION, __DATE__, __TIME__, CTEVENTLOG_VERSION);
++@@ -844,7 +849,7 @@
++ 	tzset();
++ 
++ 	char opt;
++-	while ((opt = getopt(argc, argv, "CLSTf:o:i:p:t:b:B:N:U:G:P:a:sFHhV")) != -1) {
+++	while ((opt = getopt(argc, argv, "CLSTf:o:i:p:t:b:B:N:U:G:P:a:sFHhV")) != (char)-1) {
++ 		switch (opt) {
++ 		case 'C':
++ 			mode = M_COLLECT;
++diff -r ebb74205bf14 -r b68774aa0747 src/util.c
++--- a/src/util.c	Fri May 04 13:00:30 2012 +0200
+++++ b/src/util.c	Sun Nov 27 14:14:55 2011 +0100
++@@ -745,6 +745,25 @@
++  * 	other functions
++ */
++ 
+++int getloadavg(double *list, int nelem)
+++{
+++	FILE *LOADAVG;
+++	double avg[3] = { 0.0, 0.0, 0.0 };
+++	int i, res = -1;;
+++
+++	if ((LOADAVG = fopen("/proc/loadavg", "r"))) {
+++		fscanf(LOADAVG, "%lf %lf %lf", &avg[0], &avg[1], &avg[2]);
+++		res = 0;
+++		fclose(LOADAVG);
+++	}
+++
+++	for (i = 0; (i < nelem) && (i < 3); i++) {
+++		list[i] = avg[i];
+++	}
+++
+++	return res;
+++}
+++
++ int is_load_above(double max, /*@null@*/ double *current)
++ {
++ 	int res;
++@@ -918,25 +937,23 @@
++ } /* cat() */
++ 
++ 
++-int setup_signals(void (*handler)(int signum), int handle_signals[], int ignore_signals[])
+++int setup_signals(struct sigaction* sa, void (*handler)(int signum), int handle_signals[], int ignore_signals[])
++ {
++-	struct sigaction sa;
+++	sigfillset(&sa->sa_mask);
+++	sa->sa_flags = 0;
++ 
++-	sigfillset(&sa.sa_mask);
++-	sa.sa_flags = 0;
++-
++-	sa.sa_handler = handler;
+++	sa->sa_handler = handler;
++ 	if (handle_signals) {
++ 		while (*handle_signals) {
++-			if (sigaction(*handle_signals, &sa, NULL) == -1) return -1;
+++			if (sigaction(*handle_signals, sa, NULL) == -1) return -1;
++ 			handle_signals++;
++ 		}
++ 	}
++ 
++-	sa.sa_handler = SIG_IGN;
+++	sa->sa_handler = SIG_IGN;
++ 	if (ignore_signals) {
++ 		while (*ignore_signals) {
++-			if (sigaction(*ignore_signals, &sa, NULL) == -1) return -1;
+++			if (sigaction(*ignore_signals, sa, NULL) == -1) return -1;
++ 			ignore_signals++;
++ 		}
++ 	}
++diff -r ebb74205bf14 -r b68774aa0747 src/util.h
++--- a/src/util.h	Fri May 04 13:00:30 2012 +0200
+++++ b/src/util.h	Sun Nov 27 14:14:55 2011 +0100
++@@ -300,7 +300,7 @@
++ #endif
++ 
++ EXTERN int cat(char *fn);
++-EXTERN int setup_signals(void (*handler)(int signum), int handle_signals[], int ignore_signals[]);
+++EXTERN int setup_signals(struct sigaction* sa, void (*handler)(int signum), int handle_signals[], int ignore_signals[]);
++ #ifdef HAVE_SETRLIMIT
++ EXTERN int set_rlimit(int what, rlim_t value);
++ #endif
+Index: package/ctrecorder/patches/01-added-static-compilation.patch
+===================================================================
+--- package/ctrecorder/patches/01-added-static-compilation.patch	(revision 0)
++++ package/ctrecorder/patches/01-added-static-compilation.patch	(revision 0)
+@@ -0,0 +1,25 @@
++# HG changeset patch
++# User ayufan@osk-net.pl
++# Date 1336427353 -7200
++# Node ID edd6e8e603b57e7aabe6ba498f295d5b85710ed9
++# Parent  e5106d3dac509d5e92d740deb682fc06c15b7f9e
++added static compilation
++
++diff -r e5106d3dac50 -r edd6e8e603b5 configure.in
++--- a/configure.in	Mon May 07 23:46:28 2012 +0200
+++++ b/configure.in	Mon May 07 23:49:13 2012 +0200
++@@ -138,7 +138,14 @@
++ 	#include <limits.h>
++ 	#endif
++ 	]])
+++	
+++#
+++# --enable-static
++ 
+++AC_ARG_ENABLE(static, AC_HELP_STRING([--enable-static], [Enables static compilation]))
+++if test "x$enable_static" = "xyes"; then
+++	LDFLAGS="-static"
+++fi
++ 
++ #
++ # --enable-debug
+Index: package/ctrecorder/patches/02-added-gzip-support.patch
+===================================================================
+--- package/ctrecorder/patches/02-added-gzip-support.patch	(revision 0)
++++ package/ctrecorder/patches/02-added-gzip-support.patch	(revision 0)
+@@ -0,0 +1,482 @@
++# HG changeset patch
++# User ayufan@osk-net.pl
++# Date 1336427536 -7200
++# Node ID f3e0a3c3e307a6954f8efc19a3b2aa0da90a21f6
++# Parent  edd6e8e603b57e7aabe6ba498f295d5b85710ed9
++added gzip support
++
++diff -r edd6e8e603b5 -r f3e0a3c3e307 configure.in
++--- a/configure.in	Mon May 07 23:49:13 2012 +0200
+++++ b/configure.in	Mon May 07 23:52:16 2012 +0200
++@@ -125,7 +125,6 @@
++ 	#include <libnetfilter_conntrack/libnetfilter_conntrack.h>
++ 	]])
++ 
++-
++ #
++ # NAT support
++ #
++@@ -175,6 +174,22 @@
++ AM_CONDITIONAL(ENABLE_CAPTURE, test x$enable_capture != xno)
++ AC_MSG_NOTICE([setup: enable capture: $enable_capture])
++ 
+++#
+++# --disable-gzip
+++
+++AC_ARG_ENABLE(gzip,
+++	AC_HELP_STRING([--disable-gzip], [Disable gzip file writer]))
+++
+++if test "x$enable_gzip" = "xno"; then
+++	disable_gzip="yes"
+++	AC_DEFINE(DISABLE_GZIP, 1, [Disable gzip])
+++else
+++	AC_CHECK_HEADERS([zlib.h])
+++fi
+++
+++AM_CONDITIONAL(ENABLE_GZIP, test x$enable_gzip != xno)
+++AC_MSG_NOTICE([setup: enable gzip: $enable_gzip])
+++
++ 
++ #
++ # --enable-remake-doc
++diff -r edd6e8e603b5 -r f3e0a3c3e307 src/Makefile.am
++--- a/src/Makefile.am	Mon May 07 23:49:13 2012 +0200
+++++ b/src/Makefile.am	Mon May 07 23:52:16 2012 +0200
++@@ -38,8 +38,12 @@
++ #	compat.c compat.h \
++ #	options.h
++ 
+++ctrecorder_LDADD =
++ if ENABLE_CAPTURE
++-ctrecorder_LDFLAGS = -lnetfilter_conntrack
+++ctrecorder_LDADD += -lnfnetlink -lnetfilter_conntrack
+++endif
+++if ENABLE_GZIP
+++ctrecorder_LDADD += -lz
++ endif
++ ctrecorder_CFLAGS = -I${top_srcdir}/
++ ctrecorder_SOURCES = \
++diff -r edd6e8e603b5 -r f3e0a3c3e307 src/ctrecorder.c
++--- a/src/ctrecorder.c	Mon May 07 23:49:13 2012 +0200
+++++ b/src/ctrecorder.c	Mon May 07 23:52:16 2012 +0200
++@@ -49,6 +49,10 @@
++ 
++ /* file name template */
++ int fd = -1;
+++#ifndef DISABLE_GZIP
+++gzFile gzFd = NULL;
+++int gzerrno;
+++#endif
++ char *fnt = NULL;
++ struct common *buffer = NULL;
++ int buffer_pos = 0;
++@@ -127,6 +131,13 @@
++ #endif
++ 
++ 	buffer_flush();
+++#ifndef DISABLE_GZIP
+++	if(gzFd)
+++	{
+++		gzclose(gzFd);
+++		gzFd = NULL;
+++	}
+++#endif
++ 	SAFE_CLOSE(fd);
++ 	pidfile_remove(pid_file);
++ }
++@@ -202,6 +213,9 @@
++ 	struct tm stm;
++ 	char fn[1024];
++ 	int res, nfd;
+++#ifndef DISABLE_GZIP
+++	gzFile ngz = NULL;
+++#endif
++ 
++ 	/* initialize header */
++ 	memset(&fh, 0, sizeof(fh));
++@@ -255,9 +269,30 @@
++ 		stats.rotation_fails++;
++ 		return;
++ 	}
++-
++-	log_action(LOG_INFO, "recording to %s", fn);
++-	if ((res = safe_write(nfd, &fh, sizeof(fh))) == -1) {
+++	
+++#ifndef DISABLE_GZIP
+++	if(is_gzip(fn)) {
+++		log_action(LOG_INFO, "recording gzipped to %s", fn);
+++		if(!(ngz = gzdopen(nfd, "wb"))) {			
+++			log_action(LOG_ERR, "gzdopen(%s): failed", fn);
+++			if (fd == -1) {
+++				cleanup();
+++				exit(1);
+++			}
+++		
+++			log_action(LOG_WARNING, "... writing still to old file");
+++			/* give up till next try */
+++			last_rotation_time = tv->tv_sec;
+++			stats.rotation_fails++;
+++			SAFE_CLOSE(nfd);
+++			return;
+++		}
+++	}
+++	else
+++#endif
+++		log_action(LOG_INFO, "recording to %s", fn);
+++	
+++	if ((res = safe_write(nfd, ngz, &fh, sizeof(fh))) == -1) {
++ 		log_action(LOG_ERR, "write(%s): %s", fn, strerror(errno));
++ 		cleanup();
++ 		log_stats();
++@@ -269,11 +304,19 @@
++ 		stats.rotated = time(NULL);
++ 		buffer_flush();
++ 		log_stats();
+++#ifndef DISABLE_GZIP		
+++		if(gzFd) {
+++			gzclose(gzFd);
+++		}
+++#endif
++ 		SAFE_CLOSE(fd);
++ 		// if (auto_squeeze) fork(), close(...), nice(-19), sleep(5), squeeze(old_fn)
++ 	}
++ 
++ 	fd = nfd;
+++#ifndef DISABLE_GZIP
+++	gzFd = ngz;
+++#endif
++ 	last_rotation_time = tv->tv_sec;
++ 
++ 	// combine old file to other format
++@@ -287,15 +330,25 @@
++ 
++ 	if (fd == -1 || !buffer_pos)
++ 		return;
++-
+++		
+++#ifndef DISABLE_GZIP
+++	if ((res = safe_write(fd, gzFd, buffer, buffer_pos * sizeof(*buffer))) == -1) {
+++#else
++ 	if ((res = safe_write(fd, buffer, buffer_pos * sizeof(*buffer))) == -1) {
+++#endif
++ 		log_action(LOG_ERR, "write(%d): %s", buffer_pos, strerror(errno));
++ 		stats.write_errors += buffer_pos;
++ 	} else {
++ //		log_action(LOG_DEBUG | LOG_FORE_ONLY, "write(%d): %d", buffer_pos, res);
++ 		stats.flushed += buffer_pos;
+++
+++#ifndef DISABLE_GZIP
+++		if(gzFd) {
+++			gzflush(gzFd, 0);
+++		}
+++#endif
++ 	}
++-
+++	
++ 	buffer_pos = 0;
++ }
++ 
++@@ -496,7 +549,10 @@
++ void read_events(char* fn, u_int32_t net, u_int32_t mask, u_int16_t port, char* date)
++ {
++ 	struct common_list **cache = NULL;
++-	FILE *file;
+++	FILE *file = NULL;
+++#ifndef DISABLE_GZIP	
+++	gzFile gzFile = NULL;
+++#endif
++ 
++ 	net = net & mask;
++ 	inline int ipmatch(struct orig_repl a)
++@@ -515,13 +571,26 @@
++ 	{
++ 		return (_port == a.orig.src.port) || (_port == a.orig.dst.port) || (_port == a.repl.src.port) || (_port == a.repl.dst.port);
++ 	}
++-
+++	
+++	int read_file(void* buf, size_t s, size_t n)
+++	{
+++#ifndef DISABLE_GZIP	
+++		if(gzFile) {
+++			int r = gzread(gzFile, buf, s * n);			if(r < 0)
+++				return r;
+++			return r / s;
+++		}
+++		else
+++#endif
+++			return fread(buf, s, n, file);
+++	}
+++	
++ 	void show_common()
++ 	{
++ 		struct common buf[65536];
++ 		int n, i;
++ 		for (;;) {
++-			if ((n = fread(&buf, sizeof(struct common), sizeof(buf)/sizeof(struct common), file)) <= 0)
+++			if ((n = read_file(&buf, sizeof(struct common), sizeof(buf)/sizeof(struct common))) <= 0)
++ 				break;
++ 
++ 			for (i=0; i<n; i++) {
++@@ -581,7 +650,7 @@
++ 		int n, i;
++ 
++ 		for (;;) {
++-			if ((n = fread(&buf, sizeof(struct combined), sizeof(buf)/sizeof(struct combined), file)) <= 0)
+++			if ((n = read_file(&buf, sizeof(struct combined), sizeof(buf)/sizeof(struct combined))) <= 0)
++ 				break;
++ 
++ 			for (i=0; i<n; i++) {
++@@ -596,11 +665,20 @@
++ 		}
++ 	}
++ 
++-	if (!(file = fopen(fn, "r")))
++-		die(1, "fopen: %m");
++-
+++#ifndef DISABLE_GZIP
+++	if(is_gzip(fn)) {
+++		if (!(gzFile = gzopen(fn, "rb")))
+++			die(1, "gzopen: %m");
+++	}
+++	else 
+++#endif
+++	{
+++		if (!(file = fopen(fn, "rb")))
+++			die(1, "fopen: %m");
+++	}
+++	
++ 	struct file_header fh;
++-	if (fread(&fh, sizeof(fh), 1, file) != 1)
+++	if (read_file(&fh, sizeof(fh), 1) != 1)
++ 		die(1, "fread: %m");
++ 
++ 	TERMINATE_STRING(fh.hostname);
++@@ -629,7 +707,12 @@
++ 		die(1, "Invalid fh.flags");
++ 
++ 	if (header_only) {
++-		fclose(file);
+++#ifndef DISABLE_GZIP
+++		if(gzFile)
+++			gzclose(gzFile);
+++		else
+++#endif
+++			fclose(file);
++ 		return;
++ 	}
++ 
++@@ -643,10 +726,23 @@
++ 	else
++ 		show_common();
++ 
+++#ifndef DISABLE_GZIP
+++	if(gzFile) {
+++		const char* txt = gzerror(file, &gzerrno);
+++		if(gzerrno != Z_STREAM_END && gzerrno != Z_OK)
+++			fprintf(stderr, "gzerror(input): %s\n", txt);
+++	}
+++	else
+++#endif
++ 	if (ferror(file))
++ 		fprintf(stderr, "read error: %d\n", ferror(file));
++ 
++-	fclose(file);
+++#ifndef DISABLE_GZIP
+++	if(gzFile)
+++		gzclose(gzFile);
+++	else
+++#endif
+++		fclose(file);
++ }
++ 
++ // output == NULL => squeeze "in place"
++@@ -659,18 +755,44 @@
++ 	struct common_list **cache = NULL;
++ 	struct common buf[65536];
++ 	struct file_header fh;
++-	FILE *file, *out;
+++	FILE *file = NULL, *out = NULL;
+++#ifndef DISABLE_GZIP	
+++	gzFile gzFile = NULL;
+++#endif
++ 	int n, i;
++ 
++ 
++ 	if ((cache = calloc(HASH_SIZE, sizeof(*cache))) == NULL)
++ 		die(1, "calloc(cache): %m");
++ 
++-	if (!(file = fopen(input, "r")))
++-		die(1, "fopen(input): %m");
++-
++-	if (fread(&fh, sizeof(fh), 1, file) != 1)
++-		die(1, "fread(input): %m");
+++#ifndef DISABLE_GZIP		
+++	if(is_gzip(input)) {
+++		if (!(gzFile = gzopen(input, "rb")))
+++			die(1, "gzopen(input): %m");
+++	}
+++	else 
+++#endif
+++	{
+++		if (!(file = fopen(input, "r")))
+++			die(1, "fopen(input): %m");
+++	}
+++	
+++	int read_file(void* buf, size_t s, size_t n)
+++	{
+++#ifndef DISABLE_GZIP	
+++		if(gzFile) {
+++			int r = gzread(gzFile, buf, s * n);
+++			if(r < 0)
+++				return r;
+++			return r / s;
+++		}
+++		else
+++#endif
+++			return fread(buf, s, n, file);
+++	}
+++	
+++	if (read_file(&fh, sizeof(fh), 1) != 1)
+++		die(1, "read(input): %m");
++ 
++ 	if (fh.magic != htonl(CTEVENTLOG_MAGIC))
++ 		die(1, "Invalid fh.magic");
++@@ -701,7 +823,7 @@
++ 	memset(&c, '\0', sizeof(c));
++ 
++ 	for (;;) {
++-		if ((n = fread(&buf, sizeof(struct common), sizeof(buf)/sizeof(struct common), file)) <= 0)
+++		if ((n = read_file(&buf, sizeof(struct common), sizeof(buf)/sizeof(struct common))) <= 0)
++ 			break;
++ 
++ 		for (i=0; i<n; i++) {
++@@ -741,13 +863,26 @@
++ 		}
++ 	}
++ 
+++#ifndef DISABLE_GZIP
+++	if(gzFile) {
+++		const char* txt = gzerror(file, &gzerrno);
+++		if(gzerrno != Z_STREAM_END && gzerrno != Z_OK)
+++			fprintf(stderr, "gzerror(input): %s\n", txt);
+++	}
+++	else
+++#endif
++ 	if (ferror(file))
++ 		fprintf(stderr, "ferror(input): %d\n", ferror(file));
++ 
++ 	if (ferror(out))
++ 		fprintf(stderr, "ferror(output): %d\n", ferror(file));
++-
++-	fclose(file);
+++		
+++#ifndef DISABLE_GZIP
+++	if(gzFile)
+++		gzclose(gzFile);
+++	else
+++#endif
+++		fclose(file);
++ 	fclose(out);
++ }
++ 
++@@ -770,6 +905,11 @@
++ #else
++ 	printf("Capture mode support: yes\n");
++ #endif
+++#ifdef DISABLE_GZIP
+++	printf("Gzip mode support: disabled at compilation time!\n");
+++#else
+++	printf("Gzip mode support: yes (include .gz at end of output file)\n");
+++#endif
++ #ifdef HAVE_DECL_ATTR_TIMESTAMP_START
++ 	printf("Timestamping support: yes\n");
++ #else
++@@ -782,11 +922,14 @@
++ void usage(int code) __attribute__((noreturn));
++ void usage(int code)
++ {
++-	printf("Usage: ctrecord [ -C | -L | -T | -S | -h | -V ] options ...\n");
++-	printf("capture mode: ctrecord -C ...");
+++	printf("Usage: ctrecorder [ -C | -L | -T | -S | -h | -V ] options ...\n");
+++	printf("capture mode: ctrecorder -C ...");
++ #ifdef DISABLE_CAPTURE
++ 	printf(" (disabled at compilation time)");
++ #endif
+++#ifdef DISABLE_GZIP
+++	printf(" (disabled gzip support)");
+++#endif
++ 	printf("\n");
++ 	printf("  -f path          output filename, conforming to strftime format, ex. /tmp/ct-%%Y%%m%%d-%%H%%M%%S.log\n");
++ 	printf("  -t minutes       output name change interval\n");
++diff -r edd6e8e603b5 -r f3e0a3c3e307 src/util.c
++--- a/src/util.c	Mon May 07 23:49:13 2012 +0200
+++++ b/src/util.c	Mon May 07 23:52:16 2012 +0200
++@@ -581,6 +581,7 @@
++  * may cause desync on some errno-s
++ */
++ 
+++#ifdef DISABLE_GZIP
++ ssize_t safe_write(int fd, const void *buf, size_t count)
++ {
++ 	int res;
++@@ -593,7 +594,20 @@
++ 	} while (count > 0);
++ 	return res;
++ } /* safe_write() */
++-
+++#else
+++ssize_t safe_write(int fd, gzFile gz, const void *buf, size_t count)
+++{
+++	int res;
+++	do {
+++		res = gz ? gzwrite(gz, buf, count) : write(fd, buf, count);
+++		if (res == -1 && errno == EINTR)
+++			continue;
+++		buf += res;
+++		count -= res;
+++	} while (count > 0);
+++	return res;
+++} /* safe_write() */
+++#endif
++ 
++ /*
++  * 	(sys)logging
++@@ -1226,3 +1240,12 @@
++ }
++ #endif
++ 
+++#ifndef DISABLE_GZIP
+++int is_gzip(const char *path)
+++{
+++	int len = path ? strlen(path) : 0;
+++	if(path < 3)
+++		return 0;
+++	return strcmp(path + len - 3, ".gz") == 0;
+++}
+++#endif
++diff -r edd6e8e603b5 -r f3e0a3c3e307 src/util.h
++--- a/src/util.h	Mon May 07 23:49:13 2012 +0200
+++++ b/src/util.h	Mon May 07 23:52:16 2012 +0200
++@@ -28,6 +28,9 @@
++ #include <syslog.h>
++ #include <netinet/in.h>
++ #include <errno.h>
+++#ifndef DISABLE_GZIP
+++#include <zlib.h>
+++#endif
++ #ifdef HAVE_SYS_RESOURCE_H
++ #include <sys/resource.h>
++ #endif
++@@ -259,7 +262,12 @@
++ EXTERN int connect_host_from_port(struct sockaddr_in dst, int dst_port, struct sockaddr_in src, int socket_options[], int ip_options[]);
++ EXTERN int setup_socket_in(int proto, in_addr_t ip, int port, int backlog, int socket_options[], int ip_options[]);
++ EXTERN int setup_socket(int proto, char *addr, int port, int backlog, int socket_options[], int ip_options[]);
+++#ifdef DISABLE_GZIP
++ EXTERN ssize_t safe_write(int fd, const void *buf, size_t count);
+++#else
+++EXTERN ssize_t safe_write(int fd, gzFile gz, const void *buf, size_t count);
+++EXTERN int is_gzip(const char *path);
+++#endif
++ 
++ EXTERN void die(int code, char *format, ...)
++ 	__attribute__ ((format (printf, 2, 3)))
+Index: package/ctrecorder/Makefile
+===================================================================
+--- package/ctrecorder/Makefile	(revision 0)
++++ package/ctrecorder/Makefile	(revision 0)
+@@ -0,0 +1,58 @@
++#
++# Copyright (C) 2009-2011 OpenWrt.org
++#
++# This is free software, licensed under the GNU General Public License v2.
++# See /LICENSE for more information.
++#
++
++include $(TOPDIR)/rules.mk
++
++PKG_NAME:=ctrecorder
++PKG_VERSION:=0.1.4
++PKG_RELEASE:=1
++
++PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
++PKG_SOURCE_URL:= \
++	http://software.klolik.org/files/
++# PKG_MD5SUM:=b7506cbb7580433859809d8eac53a199
++
++PKG_FIXUP:=libtool
++
++PKG_INSTALL:=1
++
++include $(INCLUDE_DIR)/package.mk
++
++define Package/ctrecorder
++  SECTION:=net
++  CATEGORY:=Network
++  DEPENDS:=+libnfnetlink +libnetfilter-conntrack +kmod-nf-conntrack-netlink +zlib
++  TITLE:=ctrecorder is event logger for Linux netfilter conntrack, part of software.klolik.org
++  URL:=http://software.klolik.org/
++endef
++
++define Package/ctrecorder/conffiles
++/etc/config/ctrecorder
++endef
++
++define Package/ctrecorder/description
++  ctrecorder uses nf_conntrack_netlink module to receive netfilter events, that is adding and destroying conntrack entries.
++  This allows saving start and end time of connection for specific protocol. Currently TCP and UDP are supported.
++  Main application of ctrecorder is connections logging for security and anti-abuse reasons.
++  Logs are especially useful for NAT-ed connection, as they contain both pre-NAT and post-NAT IPs and ports.
++  Be aware, that using NOTRACK in raw table will hide packets from conntrack and effectively from ctrecorder too.
++endef
++
++TARGET_CFLAGS += $(FPIC)
++
++CONFIGURE_ARGS += 
++
++define Package/ctrecorder/install
++	$(INSTALL_DIR) $(1)/usr/sbin
++	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/ctrecorder $(1)/usr/sbin
++	$(INSTALL_DIR) $(1)/etc/init.d
++	$(INSTALL_BIN) ./files/ctrecorder.init $(1)/etc/init.d/ctrecorder
++	$(INSTALL_DIR) $(1)/etc/config
++	$(INSTALL_DATA) ./files/ctrecorder.config $(1)/etc/config/ctrecorder
++endef
++
++$(eval $(call BuildPackage,ctrecorder))
