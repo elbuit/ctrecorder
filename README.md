@@ -86,9 +86,9 @@ squeeze mode: ctrecorder -S -f path [ -o path ]
 ```
 You need to have conntrack events enabled in your kernel config (most of the recent distributions do); otherwise daemon will not log any connections, and it will not log any error or warning:
 
-``` $ grep CONFIG_NF_CONNTRACK_EVENTS /boot/config-uname -r
+$ grep CONFIG_NF_CONNTRACK_EVENTS /boot/config-uname -r
 CONFIG_NF_CONNTRACK_EVENTS=y
-```
+
 You can also verify connection tracking events usability by running conntrack (usually found in conntrack package):
 
 ``` $ conntrack -E
