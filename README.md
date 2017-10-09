@@ -85,16 +85,16 @@ squeeze mode: ctrecorder -S -f path [ -o path ]
   -o path          output filename
 ```
 You need to have conntrack events enabled in your kernel config (most of the recent distributions do); otherwise daemon will not log any connections, and it will not log any error or warning:
-``` $ grep CONFIG_NF_CONNTRACK_EVENTS /boot/config-`uname -r`
+ $ grep CONFIG_NF_CONNTRACK_EVENTS /boot/config-`uname -r`
 CONFIG_NF_CONNTRACK_EVENTS=y
-```
+
 You can also verify connection tracking events usability by running conntrack (usually found in conntrack package):
-``` $ conntrack -E
+ $ conntrack -E
  [UPDATE] udp      17 29 src=94.1.1.1 dst=212.2.2.2 sport=41301 dport=53 src=212.2.2.2 dst=94.1.1.1 sport=53 dport=41301
  [UPDATE] udp      17 180 src=94.1.1.1 dst=212.2.2.2 sport=41301 dport=53 src=212.2.2.2 dst=94.1.1.1 sport=53 dport=41301 [ASSURED]
     [NEW] tcp      6 120 SYN_SENT src=94.1.1.1 dst=85.3.3.3 sport=39790 dport=80 [UNREPLIED] src=85.3.3.3 dst=94.1.1.1 sport=80 dport=39790
 ^C
-```
+
 You may compile ctrecorder on non-Linux machine just to read the logs (without capture code):
 ```$ ./configure --disable-capture
 [...]
